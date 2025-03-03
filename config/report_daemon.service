@@ -1,0 +1,24 @@
+[Unit]
+Description=Department Report Monitoring Daemon
+After=network.target
+Documentation=file:/usr/share/doc/report_daemon/README.md
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/report_daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+User=root
+WorkingDirectory=/var/reports
+StandardOutput=append:/var/log/report_daemon.log
+StandardError=append:/var/log/report_daemon.log
+
+# Security settings
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
