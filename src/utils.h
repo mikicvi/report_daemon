@@ -12,6 +12,7 @@
 #define REPORT_DIR "/var/reports/reporting"
 #define BACKUP_DIR "/var/reports/backup"
 #define LOG_FILE "/var/log/report_daemon.log"
+
 // definitions for backup status
 #define BACKUP_SUCCESS 1
 #define BACKUP_FAILURE 0
@@ -23,10 +24,10 @@ int get_backup_status();
 
 // File checking functions
 int check_required_files();
+void check_missing_reports();
 
 // Logging function
-void log_message(const char *message);
-void log_error(const char *message);
+void log_message(const char *type, const char *message);
 
 // Directory and File functions
 int ensure_directory(const char *dir_path);

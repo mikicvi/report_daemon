@@ -8,7 +8,7 @@ void handle_signal(int sig)
 {
     if (sig == SIGUSR1)
     {
-        log_message("Manual backup triggered.");
+        log_message("INFO", "Manual backup triggered");
         perform_backup();
     }
 }
@@ -32,32 +32,59 @@ void make_daemon()
     close(STDERR_FILENO);
 }
 
+// Helper function to check if it's a specific time
+static int is_time(int hour, int minute)
+{
+    time_t now;
+    struct tm *current_time;
+    time(&now);
+    current_time = localtime(&now);
+    return current_time->tm_hour == hour && current_time->tm_min == minute;
+}
+
 int main()
 {
     make_daemon();
-    openlog("report_daemon", LOG_PID | LOG_CONS, LOG_DAEMON);
-    signal(SIGUSR1, handle_signal); // Allow manual backup trigger
+    signal(SIGUSR1, handle_signal);
 
-    log_message("Daemon started.");
+    log_message("INFO", "Daemon started");
+
+    // Track last check times to prevent multiple executions in the same minute
+    time_t last_missing_check = 0;
+    time_t last_backup_check = 0;
+    pid_t monitor_pid = fork();
+    if (monitor_pid == 0)
+    {
+        // Child process
+        monitor_directory();
+        exit(EXIT_SUCCESS);
+    }
+    else if (monitor_pid < 0)
+    {
+        log_message("ERROR", "Failed to fork monitor process");
+    }
 
     while (1)
     {
-        time_t now;
-        struct tm *current_time;
-        time(&now);
-        current_time = localtime(&now);
+        time_t now = time(NULL);
 
-        // Check if the time is 1 AM
-        if (current_time->tm_hour == 1 && current_time->tm_min == 0)
+        if (is_time(22, 30) && (now - last_missing_check) >= 60)
         {
-            log_message("Starting scheduled tasks (move reports and backup).");
-            perform_backup();
+            log_message("INFO", "Checking for missing reports at deadline");
+            lock_directories();
+            check_missing_reports();
+            last_missing_check = now;
         }
 
-        monitor_directory(); // Detect file modifications
-        sleep(60);           // Check every 60 seconds
+        // Check for backup time at 1:00
+        if (is_time(1, 0) && (now - last_backup_check) >= 60)
+        {
+            log_message("INFO", "Starting scheduled backup");
+            perform_backup();
+            last_backup_check = now;
+        }
+        sleep(10); // Check every 10 seconds
     }
 
-    closelog();
     return 0;
 }

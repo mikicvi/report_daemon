@@ -20,7 +20,7 @@ int init_shared_memory()
     int shmid = shmget(SHM_KEY, sizeof(struct backup_status), IPC_CREAT | 0666);
     if (shmid == -1)
     {
-        log_message("Error: Failed to create shared memory");
+        log_message("ERROR", "Failed to create shared memory");
         return -1;
     }
 
@@ -28,7 +28,7 @@ int init_shared_memory()
     struct backup_status *status = shmat(shmid, NULL, 0);
     if (status == (void *)-1)
     {
-        log_message("Error: Failed to attach shared memory");
+        log_message("ERROR", "Failed to attach shared memory");
         return -1;
     }
 
@@ -40,7 +40,7 @@ int init_shared_memory()
     // Detach from segment
     if (shmdt(status) == -1)
     {
-        log_message("Error: Failed to detach shared memory");
+        log_message("ERROR", "Failed to detach shared memory");
         return -1;
     }
 
@@ -57,7 +57,7 @@ void cleanup_shared_memory()
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg),
                      "Error removing shared memory: %s", strerror(errno));
-            log_message(error_msg);
+            log_message("ERROR", error_msg);
         }
     }
 }
@@ -67,14 +67,14 @@ int get_backup_status()
     int shmid = shmget(SHM_KEY, sizeof(struct backup_status), 0666);
     if (shmid == -1)
     {
-        log_message("Error: Cannot access shared memory");
+        log_message("ERROR", "Cannot access shared memory");
         return BACKUP_FAILURE;
     }
 
     struct backup_status *status = shmat(shmid, NULL, 0);
     if (status == (void *)-1)
     {
-        log_message("Error: Failed to attach to shared memory");
+        log_message("ERROR", "Failed to attach to shared memory");
         return BACKUP_FAILURE;
     }
 
@@ -82,7 +82,7 @@ int get_backup_status()
 
     if (shmdt(status) == -1)
     {
-        log_message("Error: Failed to detach shared memory");
+        log_message("ERROR", "Failed to detach shared memory");
         return BACKUP_FAILURE;
     }
 

@@ -5,46 +5,82 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
-
-#define UPLOAD_DIR "/var/reports/uploads"
-#define REPORT_DIR "/var/reports/reporting"
+#include "utils.h"
 
 void lock_directories()
 {
-    syslog(LOG_INFO, "Locking directories...");
+    log_message("INFO", "Locking directories...");
 
-    if (chmod(UPLOAD_DIR, 0000) == -1)
+    // Save current umask and set strict permissions
+    mode_t old_umask = umask(0077);
+
+    if (chmod(UPLOAD_DIR, 0700) == -1)
     {
-        syslog(LOG_ERR, "Failed to lock upload directory");
+        log_message("ERROR", "Failed to lock upload directory");
     }
-    if (chmod(REPORT_DIR, 0000) == -1)
+    if (chmod(REPORT_DIR, 0700) == -1)
     {
-        syslog(LOG_ERR, "Failed to lock report directory");
+        log_message("ERROR", "Failed to lock report directory");
     }
 
-    syslog(LOG_INFO, "Directories locked");
+    // Verify the permissions were set
+    struct stat st;
+    if (stat(UPLOAD_DIR, &st) == 0)
+    {
+        if ((st.st_mode & 0777) != 0700)
+        {
+            log_message("ERROR", "Upload directory permissions verification failed");
+        }
+    }
+
+    if (stat(REPORT_DIR, &st) == 0)
+    {
+        if ((st.st_mode & 0777) != 0700)
+        {
+            log_message("ERROR", "Report directory permissions verification failed");
+        }
+    }
+
+    umask(old_umask);
+    log_message("INFO", "Directories locked");
 }
 
 void unlock_directories()
 {
-    syslog(LOG_INFO, "Unlocking directories...");
+    log_message("INFO", "Unlocking directories...");
+
+    // Save current umask and set permissive permissions
+    mode_t old_umask = umask(0000);
 
     if (chmod(UPLOAD_DIR, 0777) == -1)
     {
-        syslog(LOG_ERR, "Failed to unlock upload directory");
+        log_message("ERROR", "Failed to unlock upload directory");
     }
     if (chmod(REPORT_DIR, 0777) == -1)
     {
-        syslog(LOG_ERR, "Failed to unlock report directory");
+        log_message("ERROR", "Failed to unlock report directory");
     }
 
-    syslog(LOG_INFO, "Directories unlocked");
-}
+    // Verify the permissions were set
+    struct stat st;
+    if (stat(UPLOAD_DIR, &st) == 0)
+    {
+        if ((st.st_mode & 0777) != 0777)
+        {
+            log_message("ERROR", "Upload directory permissions verification failed");
+        }
+    }
 
-// New logging function for errors
-void log_error(const char *message)
-{
-    syslog(LOG_ERR, "%s", message);
+    if (stat(REPORT_DIR, &st) == 0)
+    {
+        if ((st.st_mode & 0777) != 0777)
+        {
+            log_message("ERROR", "Report directory permissions verification failed");
+        }
+    }
+
+    umask(old_umask);
+    log_message("INFO", "Directories unlocked");
 }
 
 // Function to ensure a directory exists
@@ -58,7 +94,7 @@ int ensure_directory(const char *dir_path)
         {
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), "Error creating directory %s: %s", dir_path, strerror(errno));
-            log_error(error_msg);
+            log_message("ERROR", error_msg);
             return -1;
         }
     }
@@ -80,7 +116,7 @@ int has_file_changed(const char *file_path)
 
     if (stat(file_path, &current_stat) == -1)
     {
-        log_error("Error getting file status.");
+        log_message("ERROR", "Error getting file status.");
         return 0; // Assume no change if file not accessible
     }
 

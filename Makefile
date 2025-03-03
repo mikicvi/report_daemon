@@ -8,9 +8,6 @@ all: report_daemon
 report_daemon: src/daemon.c src/logging.c src/file_monitor.c src/backup.c src/utils.c
 	$(CC) $(CFLAGS) -o build/report_daemon src/daemon.c src/logging.c src/file_monitor.c src/backup.c src/utils.c -I src
 
-clean:
-	rm -f build/report_daemon
-
 install: report_daemon
     # Install binary
 	sudo mkdir -p $(PREFIX)/bin
@@ -23,9 +20,13 @@ install: report_daemon
 	sudo chown root:root $(SYSTEMD_DIR)/report_daemon.service
 	sudo chmod 644 $(SYSTEMD_DIR)/report_daemon.service
     
-    # Create required directories
-	sudo mkdir -p /var/reports/{uploads,reporting,backup}
-	sudo chmod 777 /var/reports/{uploads,reporting,backup}
+	# Create required directories
+	sudo mkdir -p /var/reports/uploads
+	sudo mkdir -p /var/reports/reporting
+	sudo mkdir -p /var/reports/backup
+	sudo chmod 777 /var/reports/uploads
+	sudo chmod 777 /var/reports/reporting
+	sudo chmod 777 /var/reports/backup
 	sudo touch /var/log/report_daemon.log
 	sudo chmod 666 /var/log/report_daemon.log
     
@@ -38,7 +39,17 @@ uninstall:
 	sudo systemctl disable report_daemon.service
 	sudo rm -f $(PREFIX)/bin/report_daemon
 	sudo rm -f $(SYSTEMD_DIR)/report_daemon.service
+	sudo rm -rf /var/reports
+	sudo rm -f /var/log/report_daemon.log
+	sudo systemctl daemon-reload
 
 
 start:
 	sudo systemctl start report_daemon
+
+.PHONY: fix-timestamps
+fix-timestamps:
+	@find . -type f -exec touch {} +
+
+clean: fix-timestamps
+	rm -f build/report_daemon

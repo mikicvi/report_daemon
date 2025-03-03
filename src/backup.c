@@ -4,7 +4,8 @@
 #include <string.h>
 #include <sys/shm.h>
 #include <time.h>
-#include <dirent.h>
+#include <sys/wait.h> // Add for waitpid
+#include <unistd.h>   // Add for fork/exec
 
 #define SHM_KEY 1234
 #define DEPT_COUNT 4
@@ -32,7 +33,7 @@ int check_required_files()
         {
             char msg[300];
             snprintf(msg, sizeof(msg), "Missing report: %s", filename);
-            log_message(msg);
+            log_message("LOG", msg);
             missing_count++;
         }
     }
@@ -40,83 +41,28 @@ int check_required_files()
     return missing_count;
 }
 
-void move_reports()
-{
-    log_message("Starting report transfer process...");
-
-    DIR *dir;
-    struct dirent *entry;
-
-    // Open the uploads directory
-    dir = opendir(UPLOAD_DIR);
-    if (dir == NULL)
-    {
-        log_error("Error: Could not open upload directory.");
-        return;
-    }
-
-    // Read each entry in the directory
-    while ((entry = readdir(dir)) != NULL)
-    {
-        struct stat path_stat;
-        char filepath[512];
-        snprintf(filepath, sizeof(filepath), "%s/%s", UPLOAD_DIR, entry->d_name);
-        stat(filepath, &path_stat);
-        if (S_ISREG(path_stat.st_mode))
-        { // Check if it's a regular file
-            char old_path[512], new_path[512];
-
-            // Construct the full paths
-            snprintf(old_path, sizeof(old_path), "%s/%s", UPLOAD_DIR, entry->d_name);
-            snprintf(new_path, sizeof(new_path), "%s/%s", REPORT_DIR, entry->d_name);
-
-            // Move the file
-            if (rename(old_path, new_path) == 0)
-            {
-                char log_msg[512];
-                snprintf(log_msg, sizeof(log_msg), "Moved report: %s to reporting directory.", entry->d_name);
-                log_message(log_msg);
-            }
-            else
-            {
-                char error_msg[512];
-                snprintf(error_msg, sizeof(error_msg), "Error moving report: %s - %s", entry->d_name, strerror(errno));
-                log_error(error_msg);
-            }
-        }
-    }
-
-    // Close the directory
-    closedir(dir);
-
-    log_message("Report transfer process completed.");
-}
-
 void perform_backup()
 {
-    log_message("Starting backup process...");
+    log_message("LOG", "Starting backup process...");
 
     // Setup shared memory for IPC
     int shmid = shmget(SHM_KEY, sizeof(struct backup_status),
                        IPC_CREAT | 0666);
     if (shmid == -1)
     {
-        log_error("Error: Failed to create shared memory");
+        log_message("LOG", "Error: Failed to create shared memory");
         return;
     }
 
     struct backup_status *status = shmat(shmid, NULL, 0);
     if (status == (void *)-1)
     {
-        log_error("Error: Failed to attach shared memory");
+        log_message("LOG", "Error: Failed to attach shared memory");
         return;
     }
 
     // Lock directories before backup
     lock_directories();
-
-    // Move reports from upload to reporting directory
-    move_reports();
 
     // Check for missing files
     int missing = check_required_files();
@@ -126,12 +72,13 @@ void perform_backup()
                  "Warning: %d files missing", missing);
         status->success = 0;
         status->timestamp = time(NULL);
-        log_message(status->message);
+        log_message("LOG", status->message);
     }
 
     // Ensure backup directory exists
-    if (ensure_directory(BACKUP_DIR) == -1)
+    if (mkdir(BACKUP_DIR, 0755) == -1 && errno != EEXIST)
     {
+        log_message("LOG", "Error: Failed to create backup directory");
         status->success = 0;
         strcpy(status->message, "Backup directory creation failed");
         status->timestamp = time(NULL);
@@ -140,29 +87,57 @@ void perform_backup()
         return;
     }
 
-    // Perform backup
-    char backup_command[512];
-    snprintf(backup_command, sizeof(backup_command), "cp -r %s/* %s/", REPORT_DIR, BACKUP_DIR);
+    pid_t pid = fork();
 
-    int result = system(backup_command);
-    if (result == -1)
+    if (pid == -1)
     {
-        log_error("Error: Backup failed");
+        log_message("ERROR", "Fork failed during backup operation");
         status->success = 0;
-        strcpy(status->message, "Backup operation failed");
+        strcpy(status->message, "Backup operation failed - fork error");
         status->timestamp = time(NULL);
         unlock_directories();
         shmdt(status);
         return;
     }
 
-    // Success case
-    status->success = 1;
-    strcpy(status->message, "Backup completed successfully");
-    status->timestamp = time(NULL);
+    if (pid == 0)
+    {
+        // Child process
+        char src_path[512];
+        char dst_path[512];
+        snprintf(src_path, sizeof(src_path), "%s/*", REPORT_DIR);
+        snprintf(dst_path, sizeof(dst_path), "%s/", BACKUP_DIR);
 
-    unlock_directories();
-    log_message("Backup completed successfully.");
+        execl("/bin/cp", "cp", "-r", src_path, dst_path, (char *)NULL);
 
-    shmdt(status);
+        // If execl returns, there was an error
+        log_message("ERROR", "Exec failed during backup operation");
+        _exit(1);
+    }
+    else
+    {
+        // Parent process
+        int child_status;
+        waitpid(pid, &child_status, 0);
+
+        if (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0)
+        {
+            // Success case
+            status->success = 1;
+            strcpy(status->message, "Backup completed successfully");
+            status->timestamp = time(NULL);
+            log_message("LOG", "Backup completed successfully.");
+        }
+        else
+        {
+            // Failure case
+            log_message("ERROR", "Backup operation failed");
+            status->success = 0;
+            strcpy(status->message, "Backup operation failed - child process error");
+            status->timestamp = time(NULL);
+        }
+
+        unlock_directories();
+        shmdt(status);
+    }
 }

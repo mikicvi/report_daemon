@@ -7,6 +7,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <pwd.h>
+#include <errno.h>
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define BUFFER_LEN (1024 * (EVENT_SIZE + 16))
@@ -64,98 +65,117 @@ static void log_file_event(const char *event_type, const char *filename)
     snprintf(log_entry, sizeof(log_entry),
              "%s - File: %s, Owner: %s, Time: %s",
              event_type, event.filename, event.username, timestamp_str);
-    log_message(log_entry);
+    log_message("LOG", log_entry);
 }
 
 void check_missing_reports()
 {
-    time_t now;
-    struct tm *current_time;
-    time(&now);
-    current_time = localtime(&now);
+    char filename[PATH_MAX];
+    int missing_count = 0;
+    // Increased buffer size to safely accommodate all possible filenames
+    char missing_files[DEPT_COUNT * 32] = ""; // 32 chars per filename should be plenty
 
-    // Check if the time is 11:30 PM
-    if (current_time->tm_hour == 23 && current_time->tm_min >= 30)
+    // Check each department file
+    for (int i = 1; i <= DEPT_COUNT; i++)
     {
-        char filename[256];
-        int missing_count = 0;
+        snprintf(filename, sizeof(filename), "%s/%s%d.xml",
+                 UPLOAD_DIR, FILE_PREFIX, i);
 
-        for (int i = 1; i <= DEPT_COUNT; i++)
+        if (access(filename, F_OK) == -1)
         {
-            snprintf(filename, sizeof(filename), "%s/%s%d.xml",
-                     UPLOAD_DIR, FILE_PREFIX, i);
-
-            if (!file_exists(filename))
+            // Ensure we don't overflow when concatenating
+            if (strlen(missing_files) < sizeof(missing_files) - 32)
             {
-                char log_entry[512]; // Increased size
-                snprintf(log_entry, sizeof(log_entry), "Missing report: %s", filename);
-                log_error(log_entry);
-                missing_count++;
+                char temp[32];
+                snprintf(temp, sizeof(temp), "dept%d.xml ", i);
+                strcat(missing_files, temp);
             }
+            missing_count++;
         }
+    }
 
-        if (missing_count > 0)
-        {
-            char log_entry[256];
-            snprintf(log_entry, sizeof(log_entry), "Total missing reports: %d", missing_count);
-            log_error(log_entry);
-        }
+    // Log results with proper buffer sizing
+    if (missing_count > 0)
+    {
+        // Increased log_entry size to match missing_files buffer
+        char log_entry[DEPT_COUNT * 32 + 64]; // Extra space for the message prefix
+        snprintf(log_entry, sizeof(log_entry),
+                 "Missing %d reports: %s",
+                 missing_count, missing_files);
+        log_message("ERROR", log_entry);
+    }
+    else
+    {
+        log_message("INFO", "All department reports present");
     }
 }
 
 void monitor_directory()
 {
-    int fd, wd;
+    int fd, wd; // fd = file descriptor, wd = watch descriptor
     char buffer[BUFFER_LEN];
 
     fd = inotify_init();
     if (fd < 0)
     {
-        log_error("Error initializing inotify.");
+        log_message("ERROR", "Error initializing inotify");
         return;
     }
 
-    wd = inotify_add_watch(fd, UPLOAD_DIR, IN_MODIFY | IN_CREATE | IN_DELETE);
+    // Add more watch flags to capture GUI file operations
+    wd = inotify_add_watch(fd, UPLOAD_DIR,
+                           IN_CREATE | IN_MODIFY | IN_DELETE |
+                               IN_MOVED_TO | IN_CLOSE_WRITE |
+                               IN_ATTRIB | IN_MOVE_SELF | IN_DELETE_SELF |
+                               IN_MOVE | IN_DELETE_SELF | IN_DELETE);
     if (wd < 0)
     {
-        log_error("Error adding watch on upload directory.");
+        log_message("ERROR", "Error adding watch on upload directory");
+        close(fd);
         return;
     }
 
-    log_message("Monitoring upload directory for file changes.");
+    log_message("INFO", "Started monitoring upload directory");
 
     while (1)
     {
-        int length = read(fd, buffer, BUFFER_LEN);
-        if (length < 0)
+        ssize_t length = read(fd, buffer, BUFFER_LEN);
+        if (length == -1 && errno != EINTR)
         {
-            log_error("Error reading inotify event.");
+            log_message("ERROR", "Error reading inotify events");
             break;
         }
 
-        int i = 0;
-        while (i < length)
+        if (length > 0)
         {
-            struct inotify_event *event = (struct inotify_event *)&buffer[i];
-            if (event->len)
-            {
-                if (event->mask & IN_CREATE)
-                {
-                    log_file_event("CREATE", event->name);
-                }
-                else if (event->mask & IN_MODIFY)
-                {
-                    log_file_event("MODIFY", event->name);
-                }
-                else if (event->mask & IN_DELETE)
-                {
-                    log_file_event("DELETE", event->name);
-                }
-            }
-            i += EVENT_SIZE + event->len;
-        }
+            char dbg_msg[256];
+            snprintf(dbg_msg, sizeof(dbg_msg), "Received event data: %zd bytes", length);
+            log_message("DEBUG", dbg_msg);
 
-        check_missing_reports();
+            for (char *ptr = buffer; ptr < buffer + length;)
+            {
+                struct inotify_event *event = (struct inotify_event *)ptr;
+
+                if (event->len && !(event->mask & IN_ISDIR))
+                {
+                    if (event->mask & IN_CLOSE_WRITE || event->mask & IN_MOVED_TO)
+                    {
+                        // These events indicate a file has been fully written/moved
+                        log_file_event("CREATE", event->name);
+                    }
+                    else if (event->mask & IN_DELETE)
+                    {
+                        log_file_event("DELETE", event->name);
+                    }
+                    else if (event->mask & IN_MODIFY)
+                    {
+                        log_file_event("MODIFY", event->name);
+                    }
+                }
+
+                ptr += sizeof(struct inotify_event) + event->len;
+            }
+        }
     }
 
     inotify_rm_watch(fd, wd);
