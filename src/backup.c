@@ -41,6 +41,47 @@ int check_required_files()
     return missing_count;
 }
 
+void move_reports()
+{
+    pid_t pid = fork();
+
+    if (pid == -1)
+    {
+        log_message("ERROR", "Fork failed during move operation");
+        return;
+    }
+
+    if (pid == 0)
+    {
+        // Child process
+        char command[1024];
+        snprintf(command, sizeof(command),
+                 "mv %s/*.xml %s/ 2>/dev/null",
+                 UPLOAD_DIR, REPORT_DIR);
+
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+
+        // If execl returns, there was an error
+        log_message("ERROR", "Exec failed during move operation");
+        _exit(1);
+    }
+    else
+    {
+        // Parent process
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        {
+            log_message("INFO", "Files moved successfully");
+        }
+        else
+        {
+            log_message("ERROR", "Move operation failed");
+        }
+    }
+}
+
 void perform_backup()
 {
     log_message("LOG", "Starting backup process...");
@@ -60,6 +101,9 @@ void perform_backup()
         log_message("LOG", "Error: Failed to attach shared memory");
         return;
     }
+
+    // Move reports before backup
+    move_reports();
 
     // Lock directories before backup
     lock_directories();

@@ -33,7 +33,7 @@ void make_daemon()
 }
 
 // Helper function to check if it's a specific time
-static int is_time(int hour, int minute)
+int is_time(int hour, int minute)
 {
     time_t now;
     struct tm *current_time;

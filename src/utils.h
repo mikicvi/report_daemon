@@ -49,4 +49,7 @@ void perform_backup();
 // Function to check file modifications
 void monitor_directory();
 
+// Helper to check if it's a specific time
+int is_time(int hour, int minute);
+
 #endif
