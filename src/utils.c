@@ -106,34 +106,3 @@ int file_exists(const char *file_path)
 {
     return access(file_path, F_OK) != -1;
 }
-
-// Function to check if a file has been modified
-int has_file_changed(const char *file_path)
-{
-    struct stat current_stat;
-    static struct stat previous_stat;
-    static int first_run = 1;
-
-    if (stat(file_path, &current_stat) == -1)
-    {
-        log_message("ERROR", "Error getting file status.");
-        return 0; // Assume no change if file not accessible
-    }
-
-    if (first_run)
-    {
-        previous_stat = current_stat;
-        first_run = 0;
-        return 1; // Consider it changed on the first run
-    }
-
-    if (current_stat.st_mtime > previous_stat.st_mtime)
-    {
-        previous_stat = current_stat; // Update previous stat
-        return 1;                     // File has changed
-    }
-    else
-    {
-        return 0; // File has not changed
-    }
-}

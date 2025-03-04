@@ -32,7 +32,6 @@ void log_message(const char *type, const char *message);
 // Directory and File functions
 int ensure_directory(const char *dir_path);
 int file_exists(const char *file_path);
-int has_file_changed(const char *file_path);
 
 // Lock directories during backup
 void lock_directories();
