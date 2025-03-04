@@ -7,48 +7,65 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <mqueue.h> // For POSIX message queues
 
 #define UPLOAD_DIR "/var/reports/uploads"
 #define REPORT_DIR "/var/reports/reporting"
 #define BACKUP_DIR "/var/reports/backup"
 #define LOG_FILE "/var/log/report_daemon.log"
 
-// definitions for backup status
+// Definitions for backup status
 #define BACKUP_SUCCESS 1
 #define BACKUP_FAILURE 0
 
-// IPC functions
-int init_shared_memory();
-void cleanup_shared_memory();
-int get_backup_status();
+// Message queue name
+#define MQ_NAME "/report_daemon_mq"
 
-// File checking functions
+#ifndef DEPT_COUNT
+#define DEPT_COUNT 4
+#endif
+
+#ifndef FILE_PREFIX
+#define FILE_PREFIX "dept"
+#endif
+
+#define MAX_PATH_BUFFER 4096
+
+/* IPC functions using POSIX message queues */
+mqd_t init_msg_queue();
+int send_task_msg(mqd_t mq, const char *task, int result, const char *msg_text);
+void cleanup_msg_queue(mqd_t mq);
+void close_msg_queue(mqd_t mq);
+
+/* File checking functions */
 int check_required_files();
 void check_missing_reports();
 
-// Logging function
+/* Logging function */
 void log_message(const char *type, const char *message);
 
-// Directory and File functions
+/* Directory and File functions */
 int ensure_directory(const char *dir_path);
 int file_exists(const char *file_path);
 
-// Lock directories during backup
+/* Lock/Unlock directory functions */
 void lock_directories();
-
-// Unlock directories after backup
 void unlock_directories();
 
-// Move XML reports at 1AM
+/* Functions for moving and backing up XML reports */
 void move_reports();
-
-// Perform backup at 1AM
 void perform_backup();
 
-// Function to check file modifications
+/* Function for monitoring the upload directory */
 void monitor_directory();
 
-// Helper to check if it's a specific time
+/* Helper to check if it's a specific time */
 int is_time(int hour, int minute);
+
+/* Copy file using standard C file I/O */
+int copy_file(const char *src, const char *dst);
+
+/* Helper function to get the current date as "YYYY-MM-DD" */
+void get_date_string(char *buffer, size_t size);
 
 #endif

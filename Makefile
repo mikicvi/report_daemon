@@ -1,12 +1,19 @@
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -Wno-format-truncation
 PREFIX = /usr/local
 SYSTEMD_DIR = /etc/systemd/system
 
 all: report_daemon
 
-report_daemon: src/daemon.c src/logging.c src/file_monitor.c src/backup.c src/utils.c
-	$(CC) $(CFLAGS) -o build/report_daemon src/daemon.c src/logging.c src/file_monitor.c src/backup.c src/utils.c -I src
+report_daemon: src/daemon.c src/ipc.c src/logging.c src/file_monitor.c src/backup.c src/utils.c 
+	$(CC) $(CFLAGS) -o build/report_daemon src/daemon.c src/ipc.c src/logging.c src/file_monitor.c src/backup.c src/utils.c -I src
+
+## Build the IPC monitor for demo
+ipc_monitor: src/ipc_monitor.c src/utils.h
+	$(CC) $(CFLAGS) -o build/ipc_monitor src/ipc_monitor.c -lrt
+## Demo the IPC comms
+monitor: ipc_monitor
+	./build/ipc_monitor
 
 install: report_daemon
     # Install binary

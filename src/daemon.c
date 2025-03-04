@@ -2,18 +2,70 @@
 #include <signal.h>
 #include <time.h>
 #include <syslog.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <mqueue.h>
 
-// Signal handler to manually trigger backup
+#define PID_FILE "/tmp/report_daemon.pid"
+
+volatile sig_atomic_t backup_requested = 0;
+
+/* Signal handler for SIGUSR1 - sets a flag to trigger manual backup */
 void handle_signal(int sig)
 {
     if (sig == SIGUSR1)
     {
-        log_message("INFO", "Manual backup triggered");
-        perform_backup();
+        log_message("INFO", "SIGUSR1 received: scheduling manual backup");
+        backup_requested = 1;
     }
 }
 
-// Converts the program into a daemon
+/* Write the daemon's PID to a file so that the client mode can find it */
+void write_pid_file()
+{
+    FILE *fp = fopen(PID_FILE, "w");
+    if (fp)
+    {
+        fprintf(fp, "%d", getpid());
+        fclose(fp);
+        log_message("INFO", "PID file written successfully to " PID_FILE);
+    }
+    else
+    {
+        log_message("ERROR", "Failed to write PID file to " PID_FILE);
+    }
+}
+
+/* Client mode: read the PID file and send SIGUSR1 to trigger manual backup */
+int send_signal_to_daemon(const char *pid_file)
+{
+    FILE *fp = fopen(pid_file, "r");
+    if (!fp)
+    {
+        fprintf(stderr, "Unable to open PID file '%s'\n", pid_file);
+        return -1;
+    }
+    int pid;
+    if (fscanf(fp, "%d", &pid) != 1)
+    {
+        fprintf(stderr, "Failed to read PID from file '%s'\n", pid_file);
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    if (kill(pid, SIGUSR1) == -1)
+    {
+        fprintf(stderr, "Failed to send SIGUSR1 to PID %d: %s\n", pid, strerror(errno));
+        return -1;
+    }
+    printf("Sent SIGUSR1 to daemon (PID %d) to trigger manual backup.\n", pid);
+    return 0;
+}
+
+/* Daemonize the process */
 void make_daemon()
 {
     pid_t pid = fork();
@@ -23,7 +75,8 @@ void make_daemon()
         exit(EXIT_SUCCESS); // Parent exits
 
     umask(0);
-    setsid();
+    if (setsid() < 0)
+        exit(EXIT_FAILURE);
     if (chdir("/") < 0)
         exit(EXIT_FAILURE);
 
@@ -32,7 +85,7 @@ void make_daemon()
     close(STDERR_FILENO);
 }
 
-// Helper function to check if it's a specific time
+/* Helper function to check if it's a specific time */
 int is_time(int hour, int minute)
 {
     time_t now;
@@ -42,20 +95,42 @@ int is_time(int hour, int minute)
     return current_time->tm_hour == hour && current_time->tm_min == minute;
 }
 
-int main()
+int main(int argc, char *argv[])
 {
+    /* If a command-line argument "manual-backup" is provided, run in client mode */
+    if (argc > 1 && strcmp(argv[1], "manual-backup") == 0)
+    {
+        if (send_signal_to_daemon(PID_FILE) == 0)
+            return 0;
+        else
+            return EXIT_FAILURE;
+    }
+
+    /* Normal daemon operation */
     make_daemon();
+    write_pid_file();
     signal(SIGUSR1, handle_signal);
+
+    /* Initialize the POSIX message queue for IPC */
+    mqd_t mq = init_msg_queue();
+    if (mq == (mqd_t)-1)
+    {
+        log_message("ERROR", "Failed to initialize message queue");
+    }
+    else
+    {
+        close_msg_queue(mq); // We'll open it as needed in each function.
+    }
 
     log_message("INFO", "Daemon started");
 
-    // Track last check times to prevent multiple executions in the same minute
     time_t last_missing_check = 0;
     time_t last_backup_check = 0;
+
+    /* Fork a process to monitor the upload directory */
     pid_t monitor_pid = fork();
     if (monitor_pid == 0)
     {
-        // Child process
         monitor_directory();
         exit(EXIT_SUCCESS);
     }
@@ -64,11 +139,13 @@ int main()
         log_message("ERROR", "Failed to fork monitor process");
     }
 
+    /* Main loop */
     while (1)
     {
         time_t now = time(NULL);
 
-        if (is_time(22, 30) && (now - last_missing_check) >= 60)
+        /* Check for missing reports at 23:30 (upload deadline) */
+        if (is_time(23, 30) && (now - last_missing_check) >= 60)
         {
             log_message("INFO", "Checking for missing reports at deadline");
             lock_directories();
@@ -76,15 +153,25 @@ int main()
             last_missing_check = now;
         }
 
-        // Check for backup time at 1:00
+        /* Scheduled backup at 1:00 */
         if (is_time(1, 0) && (now - last_backup_check) >= 60)
         {
             log_message("INFO", "Starting scheduled backup");
             perform_backup();
+            unlock_directories();
             last_backup_check = now;
         }
-        sleep(10); // Check every 10 seconds
-    }
 
+        /* Manual backup triggered by SIGUSR1 */
+        if (backup_requested)
+        {
+            log_message("INFO", "Performing manual backup as requested");
+            lock_directories();
+            perform_backup();
+            unlock_directories();
+            backup_requested = 0;
+        }
+        sleep(10);
+    }
     return 0;
 }

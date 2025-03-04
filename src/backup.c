@@ -2,186 +2,241 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
-#include <sys/shm.h>
 #include <time.h>
-#include <sys/wait.h> // Add for waitpid
-#include <unistd.h>   // Add for fork/exec
+#include <dirent.h>
 
-#define SHM_KEY 1234
-#define DEPT_COUNT 4
-#define FILE_PREFIX "dept"
+#ifndef DT_REG
+#define DT_REG 8
+#endif
 
-// Shared memory structure for IPC
-struct backup_status
+/* Helper function to get the current date as "YYYY-MM-DD" */
+void get_date_string(char *buffer, size_t size)
 {
-    int success;
-    char message[256];
-    time_t timestamp;
-};
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+    snprintf(buffer, size, "%04d-%02d-%02d",
+             tm_now->tm_year + 1900, tm_now->tm_mon + 1, tm_now->tm_mday);
+}
 
 int check_required_files()
 {
-    char filename[256];
+    char date_dir[MAX_PATH_BUFFER];
+    get_date_string(date_dir, sizeof(date_dir));
+
+    /* Build the current reporting directory path, e.g., "/var/reports/reporting/2023-03-04" */
+    char current_report_dir[MAX_PATH_BUFFER];
+    snprintf(current_report_dir, sizeof(current_report_dir), "%s/%s", REPORT_DIR, date_dir);
+
+    char filename[MAX_PATH_BUFFER];
     int missing_count = 0;
 
     for (int i = 1; i <= DEPT_COUNT; i++)
     {
         snprintf(filename, sizeof(filename), "%s/%s%d.xml",
-                 REPORT_DIR, FILE_PREFIX, i);
+                 current_report_dir, FILE_PREFIX, i);
 
         if (access(filename, F_OK) == -1)
         {
-            char msg[300];
+            char msg[1024];
             snprintf(msg, sizeof(msg), "Missing report: %s", filename);
             log_message("LOG", msg);
             missing_count++;
         }
     }
-
     return missing_count;
 }
 
 void move_reports()
 {
-    pid_t pid = fork();
+    char date_dir[MAX_PATH_BUFFER];
+    get_date_string(date_dir, sizeof(date_dir));
 
-    if (pid == -1)
+    /* Create a subdirectory under REPORT_DIR for today's reports */
+    char full_report_dir[MAX_PATH_BUFFER];
+    snprintf(full_report_dir, sizeof(full_report_dir), "%s/%s", REPORT_DIR, date_dir);
+    if (ensure_directory(full_report_dir) == -1)
     {
-        log_message("ERROR", "Fork failed during move operation");
+        log_message("ERROR", "Failed to create today's reporting directory");
         return;
     }
 
-    if (pid == 0)
+    DIR *dir = opendir(UPLOAD_DIR);
+    if (!dir)
     {
-        // Child process
-        char command[1024];
-        snprintf(command, sizeof(command),
-                 "mv %s/*.xml %s/ 2>/dev/null",
-                 UPLOAD_DIR, REPORT_DIR);
-
-        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
-
-        // If execl returns, there was an error
-        log_message("ERROR", "Exec failed during move operation");
-        _exit(1);
+        log_message("ERROR", "Failed to open upload directory for moving reports");
+        return;
     }
-    else
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
     {
-        // Parent process
-        int status;
-        waitpid(pid, &status, 0);
+        if (entry->d_type == DT_REG) // Only process regular files
+        {
+            char *ext = strrchr(entry->d_name, '.');
+            if (ext && strcmp(ext, ".xml") == 0)
+            {
+                char src_path[MAX_PATH_BUFFER];
+                char dst_path[MAX_PATH_BUFFER];
+                snprintf(src_path, sizeof(src_path), "%s/%s", UPLOAD_DIR, entry->d_name);
+                snprintf(dst_path, sizeof(dst_path), "%s/%s", full_report_dir, entry->d_name);
 
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
-        {
-            log_message("INFO", "Files moved successfully");
-        }
-        else
-        {
-            log_message("ERROR", "Move operation failed");
+                if (rename(src_path, dst_path) == 0)
+                {
+                    char msg[1024];
+                    snprintf(msg, sizeof(msg), "Moved file %s to reporting directory %s", entry->d_name, full_report_dir);
+                    log_message("INFO", msg);
+
+                    /* Report the move operation via POSIX IPC */
+                    mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+                    if (mq != (mqd_t)-1)
+                    {
+                        send_task_msg(mq, "move_reports", 1, msg);
+                        mq_close(mq);
+                    }
+                }
+                else
+                {
+                    char err[1024];
+                    snprintf(err, sizeof(err), "Failed to move file %s: %s", entry->d_name, strerror(errno));
+                    log_message("ERROR", err);
+
+                    mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+                    if (mq != (mqd_t)-1)
+                    {
+                        send_task_msg(mq, "move_reports", 0, err);
+                        mq_close(mq);
+                    }
+                }
+            }
         }
     }
+    closedir(dir);
 }
 
 void perform_backup()
 {
     log_message("LOG", "Starting backup process...");
 
-    // Setup shared memory for IPC
-    int shmid = shmget(SHM_KEY, sizeof(struct backup_status),
-                       IPC_CREAT | 0666);
-    if (shmid == -1)
-    {
-        log_message("LOG", "Error: Failed to create shared memory");
-        return;
-    }
-
-    struct backup_status *status = shmat(shmid, NULL, 0);
-    if (status == (void *)-1)
-    {
-        log_message("LOG", "Error: Failed to attach shared memory");
-        return;
-    }
-
-    // Move reports before backup
+    /* First, move new reports */
     move_reports();
 
-    // Lock directories before backup
-    lock_directories();
-
-    // Check for missing files
+    /* Check for missing files */
     int missing = check_required_files();
     if (missing > 0)
     {
-        snprintf(status->message, sizeof(status->message),
-                 "Warning: %d files missing", missing);
-        status->success = 0;
-        status->timestamp = time(NULL);
-        log_message("LOG", status->message);
-    }
-
-    // Ensure backup directory exists
-    if (mkdir(BACKUP_DIR, 0755) == -1 && errno != EEXIST)
-    {
-        log_message("LOG", "Error: Failed to create backup directory");
-        status->success = 0;
-        strcpy(status->message, "Backup directory creation failed");
-        status->timestamp = time(NULL);
-        unlock_directories();
-        shmdt(status);
-        return;
-    }
-
-    pid_t pid = fork();
-
-    if (pid == -1)
-    {
-        log_message("ERROR", "Fork failed during backup operation");
-        status->success = 0;
-        strcpy(status->message, "Backup operation failed - fork error");
-        status->timestamp = time(NULL);
-        unlock_directories();
-        shmdt(status);
-        return;
-    }
-
-    if (pid == 0)
-    {
-        // Child process
-        char src_path[512];
-        char dst_path[512];
-        snprintf(src_path, sizeof(src_path), "%s/*", REPORT_DIR);
-        snprintf(dst_path, sizeof(dst_path), "%s/", BACKUP_DIR);
-
-        execl("/bin/cp", "cp", "-r", src_path, dst_path, (char *)NULL);
-
-        // If execl returns, there was an error
-        log_message("ERROR", "Exec failed during backup operation");
-        _exit(1);
+        char warn_msg[1024];
+        snprintf(warn_msg, sizeof(warn_msg), "Warning: %d files missing in today's reporting directory", missing);
+        log_message("LOG", warn_msg);
+        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "check_files", 0, warn_msg);
+            mq_close(mq);
+        }
     }
     else
     {
-        // Parent process
-        int child_status;
-        waitpid(pid, &child_status, 0);
-
-        if (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0)
+        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+        if (mq != (mqd_t)-1)
         {
-            // Success case
-            status->success = 1;
-            strcpy(status->message, "Backup completed successfully");
-            status->timestamp = time(NULL);
-            log_message("LOG", "Backup completed successfully.");
+            send_task_msg(mq, "check_files", 1, "All reports present");
+            mq_close(mq);
         }
-        else
-        {
-            // Failure case
-            log_message("ERROR", "Backup operation failed");
-            status->success = 0;
-            strcpy(status->message, "Backup operation failed - child process error");
-            status->timestamp = time(NULL);
-        }
+    }
 
-        unlock_directories();
-        shmdt(status);
+    char date_dir[MAX_PATH_BUFFER];
+    get_date_string(date_dir, sizeof(date_dir));
+
+    /* Create a subdirectory in the backup directory for today's backup */
+    char backup_date_dir[MAX_PATH_BUFFER];
+    snprintf(backup_date_dir, sizeof(backup_date_dir), "%s/%s", BACKUP_DIR, date_dir);
+    if (ensure_directory(backup_date_dir) == -1)
+    {
+        log_message("ERROR", "Backup directory creation failed for today's date");
+        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "backup", 0, "Backup directory creation failed");
+            mq_close(mq);
+        }
+        return;
+    }
+
+    /* Source directory: today's reporting folder */
+    char current_report_dir[MAX_PATH_BUFFER];
+    snprintf(current_report_dir, sizeof(current_report_dir), "%s/%s", REPORT_DIR, date_dir);
+
+    DIR *dir = opendir(current_report_dir);
+    if (!dir)
+    {
+        log_message("ERROR", "Failed to open today's reporting directory for backup");
+        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "backup", 0, "Unable to open reporting directory for backup");
+            mq_close(mq);
+        }
+        return;
+    }
+
+    int copy_failures = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (entry->d_type == DT_REG)
+        {
+            char src_file[MAX_PATH_BUFFER];
+            char dst_file[MAX_PATH_BUFFER];
+            snprintf(src_file, sizeof(src_file), "%s/%s", current_report_dir, entry->d_name);
+            snprintf(dst_file, sizeof(dst_file), "%s/%s", backup_date_dir, entry->d_name);
+
+            if (copy_file(src_file, dst_file) == 0)
+            {
+                char msg[1024];
+                snprintf(msg, sizeof(msg), "Backed up file %s successfully", entry->d_name);
+                log_message("INFO", msg);
+                mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+                if (mq != (mqd_t)-1)
+                {
+                    send_task_msg(mq, "copy_file", 1, msg);
+                    mq_close(mq);
+                }
+            }
+            else
+            {
+                char err[1024];
+                snprintf(err, sizeof(err), "Failed to back up file %s", entry->d_name);
+                log_message("ERROR", err);
+                mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+                if (mq != (mqd_t)-1)
+                {
+                    send_task_msg(mq, "copy_file", 0, err);
+                    mq_close(mq);
+                }
+                copy_failures++;
+            }
+        }
+    }
+    closedir(dir);
+
+    if (copy_failures == 0)
+    {
+        log_message("LOG", "Backup process completed successfully");
+        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "backup", 1, "Backup completed successfully");
+            mq_close(mq);
+        }
+    }
+    else
+    {
+        log_message("ERROR", "Backup process encountered errors");
+        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "backup", 0, "Backup completed with errors");
+            mq_close(mq);
+        }
     }
 }

@@ -1,3 +1,5 @@
+/* file_monitor.c – Monitor the upload directory and report events via IPC */
+
 #include "utils.h"
 #include <sys/inotify.h>
 #include <limits.h>
@@ -8,6 +10,7 @@
 #include <sys/stat.h>
 #include <pwd.h>
 #include <errno.h>
+#include <mqueue.h> // Needed for POSIX message queues
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define BUFFER_LEN (1024 * (EVENT_SIZE + 16))
@@ -21,7 +24,7 @@ struct file_event
     time_t timestamp;
 };
 
-// Helper function to get file owner using stat
+/* Helper function to get file owner using stat */
 static void get_file_owner(const char *filepath, char *username, size_t size)
 {
     struct stat file_stat;
@@ -44,38 +47,50 @@ static void get_file_owner(const char *filepath, char *username, size_t size)
     }
 }
 
+/* Helper function that logs the event and reports it via IPC */
 static void log_file_event(const char *event_type, const char *filename)
 {
     struct file_event event;
     char filepath[PATH_MAX];
     event.timestamp = time(NULL);
 
-    // Construct full filepath
+    /* Construct full filepath from the upload directory */
     snprintf(filepath, sizeof(filepath), "%s/%s", UPLOAD_DIR, filename);
 
-    // Get file owner
+    /* Get file owner */
     get_file_owner(filepath, event.username, sizeof(event.username));
     strncpy(event.filename, filename, sizeof(event.filename) - 1);
+    event.filename[sizeof(event.filename) - 1] = '\0';
 
-    char log_entry[1024]; // Increased size
+    char log_entry[1024]; // Buffer for log message
     char timestamp_str[32];
-    strftime(timestamp_str, sizeof(timestamp_str), "%Y-%m-%d %H:%M:%S",
-             localtime(&event.timestamp));
+    strftime(timestamp_str, sizeof(timestamp_str), "%Y-%m-%d %H:%M:%S", localtime(&event.timestamp));
 
     snprintf(log_entry, sizeof(log_entry),
              "%s - File: %s, Owner: %s, Time: %s",
              event_type, event.filename, event.username, timestamp_str);
+
+    /* Log the event locally */
     log_message("LOG", log_entry);
+
+    /* Report the event via IPC */
+    mqd_t mq = init_msg_queue();
+    if (mq != (mqd_t)-1)
+    {
+        /* Send IPC message with event details; result 1 indicates success in processing the event */
+        send_task_msg(mq, event_type, 1, log_entry);
+        /* Clean up the message queue (close and unlink) */
+        close_msg_queue(mq);
+    }
 }
 
 void check_missing_reports()
 {
     char filename[PATH_MAX];
     int missing_count = 0;
-    // Increased buffer size to safely accommodate all possible filenames
-    char missing_files[DEPT_COUNT * 32] = ""; // 32 chars per filename should be plenty
+    char missing_files[DEPT_COUNT * 32] = ""; // Buffer to accumulate missing filenames
 
-    // Check each department file
+    /* Check each department file in the upload directory */
     for (int i = 1; i <= DEPT_COUNT; i++)
     {
         snprintf(filename, sizeof(filename), "%s/%s%d.xml",
@@ -83,7 +98,6 @@ void check_missing_reports()
 
         if (access(filename, F_OK) == -1)
         {
-            // Ensure we don't overflow when concatenating
             if (strlen(missing_files) < sizeof(missing_files) - 32)
             {
                 char temp[32];
@@ -94,25 +108,37 @@ void check_missing_reports()
         }
     }
 
-    // Log results with proper buffer sizing
     if (missing_count > 0)
     {
-        // Increased log_entry size to match missing_files buffer
-        char log_entry[DEPT_COUNT * 32 + 64]; // Extra space for the message prefix
+        char log_entry[DEPT_COUNT * 32 + 64];
         snprintf(log_entry, sizeof(log_entry),
                  "Missing %d reports: %s",
                  missing_count, missing_files);
         log_message("ERROR", log_entry);
+
+        /* Report missing file event via IPC */
+        mqd_t mq = init_msg_queue();
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "missing_reports", 0, log_entry);
+            close_msg_queue(mq);
+        }
     }
     else
     {
         log_message("INFO", "All department reports present");
+        mqd_t mq = init_msg_queue();
+        if (mq != (mqd_t)-1)
+        {
+            send_task_msg(mq, "missing_reports", 1, "All reports present");
+            close_msg_queue(mq);
+        }
     }
 }
 
 void monitor_directory()
 {
-    int fd, wd; // fd = file descriptor, wd = watch descriptor
+    int fd, wd;
     char buffer[BUFFER_LEN];
 
     fd = inotify_init();
@@ -122,7 +148,6 @@ void monitor_directory()
         return;
     }
 
-    // Add more watch flags to capture GUI file operations
     wd = inotify_add_watch(fd, UPLOAD_DIR,
                            IN_CREATE | IN_MODIFY | IN_DELETE |
                                IN_MOVED_TO | IN_CLOSE_WRITE |
@@ -160,7 +185,7 @@ void monitor_directory()
                 {
                     if (event->mask & IN_CLOSE_WRITE || event->mask & IN_MOVED_TO)
                     {
-                        // These events indicate a file has been fully written/moved
+                        /* Report file creation/completion */
                         log_file_event("CREATE", event->name);
                     }
                     else if (event->mask & IN_DELETE)
@@ -172,7 +197,6 @@ void monitor_directory()
                         log_file_event("MODIFY", event->name);
                     }
                 }
-
                 ptr += sizeof(struct inotify_event) + event->len;
             }
         }
