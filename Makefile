@@ -60,5 +60,5 @@ fix-timestamps:
 
 clean: fix-timestamps
 	rm -f build/report_daemon
-	rm -r build/ipc_monitor
-	rm -r /tmp/report_daemon.pid
+	rm -f build/ipc_monitor
+	rm -f /tmp/report_daemon.pid

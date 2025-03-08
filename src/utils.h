@@ -37,35 +37,33 @@ int send_task_msg(mqd_t mq, const char *task, int result, const char *msg_text);
 void cleanup_msg_queue(mqd_t mq);
 void close_msg_queue(mqd_t mq);
 
-/* File checking functions */
+// File checking functions
 int check_required_files();
 void check_missing_reports();
 
-/* Logging function */
+// Logging function
 void log_message(const char *type, const char *message);
 
-/* Directory and File functions */
+// Directory and File functions
 int ensure_directory(const char *dir_path);
 int file_exists(const char *file_path);
 
-/* Lock/Unlock directory functions */
+// Lock directories during backup
 void lock_directories();
+
+// Unlock directories after backup
 void unlock_directories();
 
-/* Functions for moving and backing up XML reports */
+// Move XML reports function
 void move_reports();
+
+// Perform backup functionality
 void perform_backup();
 
-/* Function for monitoring the upload directory */
+// Function monitoring reports dir
 void monitor_directory();
 
-/* Helper to check if it's a specific time */
+// Helper to check if it's a specific time
 int is_time(int hour, int minute);
-
-/* Copy file using standard C file I/O */
-int copy_file(const char *src, const char *dst);
-
-/* Helper function to get the current date as "YYYY-MM-DD" */
-void get_date_string(char *buffer, size_t size);
 
 #endif
