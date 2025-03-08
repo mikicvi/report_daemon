@@ -106,3 +106,43 @@ int file_exists(const char *file_path)
 {
     return access(file_path, F_OK) != -1;
 }
+
+// Function to copy a file from src to dst
+int copy_file(const char *src, const char *dst)
+{
+    FILE *in = fopen(src, "rb");
+    if (!in)
+    {
+        char err[256];
+        snprintf(err, sizeof(err), "Failed to open source file %s: %s", src, strerror(errno));
+        log_message("ERROR", err);
+        return -1;
+    }
+
+    FILE *out = fopen(dst, "wb");
+    if (!out)
+    {
+        char err[256];
+        snprintf(err, sizeof(err), "Failed to open destination file %s: %s", dst, strerror(errno));
+        log_message("ERROR", err);
+        fclose(in);
+        return -1;
+    }
+
+    char buffer[4096];
+    size_t bytes;
+    while ((bytes = fread(buffer, 1, sizeof(buffer), in)) > 0)
+    {
+        if (fwrite(buffer, 1, bytes, out) != bytes)
+        {
+            log_message("ERROR", "Error writing data during file copy");
+            fclose(in);
+            fclose(out);
+            return -1;
+        }
+    }
+
+    fclose(in);
+    fclose(out);
+    return 0;
+}

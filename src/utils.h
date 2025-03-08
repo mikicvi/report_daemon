@@ -66,4 +66,7 @@ void monitor_directory();
 // Helper to check if it's a specific time
 int is_time(int hour, int minute);
 
+// Helper to copy a file
+int copy_file(const char *src, const char *dst);
+
 #endif
