@@ -31,18 +31,6 @@ void handle_child(int sig)
         ;
 }
 
-// Add cleanup function and handler
-static void cleanup(void)
-{
-    unlink(PID_FILE);
-}
-
-static void handle_termination(int sig)
-{
-    cleanup();
-    exit(0);
-}
-
 /* Write the daemon's PID to a file so that the client mode can find it */
 void write_pid_file()
 {
@@ -92,17 +80,38 @@ void make_daemon()
     if (pid < 0)
         exit(EXIT_FAILURE);
     if (pid > 0)
-        exit(EXIT_SUCCESS); // Parent exits
+    {
+        exit(EXIT_SUCCESS);
+    }
 
+    // Child continues with daemon initialization
     umask(0);
     if (setsid() < 0)
         exit(EXIT_FAILURE);
+
+    // Second fork to ensure we can't reacquire a terminal
+    pid = fork();
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+
     if (chdir("/") < 0)
         exit(EXIT_FAILURE);
 
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
+
+    // Set up signal handlers after daemonizing
+    signal(SIGCHLD, handle_child);
+    signal(SIGUSR1, handle_signal);
+}
+
+static void cleanup(void)
+{
+    unlink(PID_FILE);
+    log_message("INFO", "Daemon shutting down, cleaned up PID file");
 }
 
 int main(int argc, char *argv[])
@@ -116,15 +125,8 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
     }
 
-    signal(SIGTERM, handle_termination);
-    signal(SIGINT, handle_termination);
-    signal(SIGQUIT, handle_termination);
-    atexit(cleanup);
-
-    /* Normal daemon operation */
+    /* Daemonize first */
     make_daemon();
-    write_pid_file();
-    signal(SIGUSR1, handle_signal);
 
     /* Initialize the POSIX message queue for IPC */
     mqd_t mq = init_msg_queue();
@@ -134,16 +136,18 @@ int main(int argc, char *argv[])
     }
     else
     {
-        close_msg_queue(mq); // We'll open it as needed in each function.
+        close_msg_queue(mq);
     }
 
     log_message("INFO", "Daemon started");
 
+    /* Write PID file after daemonization */
+    write_pid_file();
+
     time_t last_missing_check = 0;
     time_t last_backup_check = 0;
 
-    /* Fork a process to monitor the upload directory but reap it in exit case */
-    signal(SIGCHLD, handle_child);
+    /* Fork monitor process after daemon is fully initialized */
     pid_t monitor_pid = fork();
     if (monitor_pid == 0)
     {
@@ -153,9 +157,13 @@ int main(int argc, char *argv[])
     else if (monitor_pid < 0)
     {
         log_message("ERROR", "Failed to fork monitor process");
+        return EXIT_FAILURE;
     }
 
-    /* Main loop */
+    /* Set up cleanup handler */
+    atexit(cleanup);
+
+    /* Main daemon loop */
     while (1)
     {
         time_t now = time(NULL);
@@ -187,7 +195,9 @@ int main(int argc, char *argv[])
             unlock_directories();
             backup_requested = 0;
         }
+
         sleep(5);
     }
+
     return 0;
 }

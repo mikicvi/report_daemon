@@ -141,7 +141,7 @@ void monitor_directory()
     int fd, wd;
     char buffer[BUFFER_LEN];
 
-    fd = inotify_init();
+    fd = inotify_init1(IN_NONBLOCK); // Use non-blocking mode
     if (fd < 0)
     {
         log_message("ERROR", "Error initializing inotify");
@@ -150,9 +150,7 @@ void monitor_directory()
 
     wd = inotify_add_watch(fd, UPLOAD_DIR,
                            IN_CREATE | IN_MODIFY | IN_DELETE |
-                               IN_MOVED_TO | IN_CLOSE_WRITE |
-                               IN_ATTRIB | IN_MOVE_SELF | IN_DELETE_SELF |
-                               IN_MOVE | IN_DELETE_SELF | IN_DELETE);
+                               IN_MOVED_TO | IN_CLOSE_WRITE); // Simplified watch flags
     if (wd < 0)
     {
         log_message("ERROR", "Error adding watch on upload directory");
@@ -164,41 +162,50 @@ void monitor_directory()
 
     while (1)
     {
-        ssize_t length = read(fd, buffer, BUFFER_LEN);
-        if (length == -1 && errno != EINTR)
-        {
-            log_message("ERROR", "Error reading inotify events");
-            break;
-        }
+        // Add small delay to prevent CPU spinning
+        usleep(100000); // 100ms delay
 
-        if (length > 0)
+        ssize_t length;
+        while ((length = read(fd, buffer, BUFFER_LEN)) > 0)
         {
             char dbg_msg[256];
             snprintf(dbg_msg, sizeof(dbg_msg), "Received event data: %zd bytes", length);
             log_message("DEBUG", dbg_msg);
 
-            for (char *ptr = buffer; ptr < buffer + length;)
+            char *ptr = buffer;
+            while (ptr < buffer + length)
             {
                 struct inotify_event *event = (struct inotify_event *)ptr;
 
-                if (event->len && !(event->mask & IN_ISDIR))
+                if (event->len > 0 && !(event->mask & IN_ISDIR))
                 {
-                    if (event->mask & IN_CLOSE_WRITE || event->mask & IN_MOVED_TO)
+                    // Filter out temporary files and backup files
+                    if (event->name[0] != '.' &&
+                        strstr(event->name, "~") == NULL &&
+                        strstr(event->name, ".swp") == NULL)
                     {
-                        /* Report file creation/completion */
-                        log_file_event("CREATE", event->name);
-                    }
-                    else if (event->mask & IN_DELETE)
-                    {
-                        log_file_event("DELETE", event->name);
-                    }
-                    else if (event->mask & IN_MODIFY)
-                    {
-                        log_file_event("MODIFY", event->name);
+                        if (event->mask & IN_CLOSE_WRITE || event->mask & IN_MOVED_TO)
+                        {
+                            log_file_event("CREATE", event->name);
+                        }
+                        else if (event->mask & IN_DELETE)
+                        {
+                            log_file_event("DELETE", event->name);
+                        }
+                        else if (event->mask & IN_MODIFY)
+                        {
+                            log_file_event("MODIFY", event->name);
+                        }
                     }
                 }
                 ptr += sizeof(struct inotify_event) + event->len;
             }
+        }
+
+        if (length == -1 && errno != EAGAIN)
+        {
+            log_message("ERROR", "Error reading inotify events");
+            break;
         }
     }
 
