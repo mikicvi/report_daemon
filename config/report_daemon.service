@@ -1,16 +1,16 @@
 [Unit]
 Description=Department Report Monitoring Daemon
-After=network.target
+After=network.target multi-user.target
 Documentation=file:/usr/share/doc/report_daemon/README.md
 
 [Service]
 Type=forking
 ExecStart=/usr/local/bin/report_daemon
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
+Restart=on-failure
 RestartSec=5
 User=root
-WorkingDirectory=/var/reports
+WorkingDirectory=/
 StandardOutput=append:/var/log/report_daemon.log
 StandardError=append:/var/log/report_daemon.log
 
