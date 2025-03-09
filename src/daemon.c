@@ -192,12 +192,13 @@ int main(int argc, char *argv[])
         if (backup_requested)
         {
             log_message("INFO", "Performing manual backup as requested");
+            lock_directories();
             perform_backup();
+            unlock_directories();
             backup_requested = 0;
-            // Don't unlock - maintain lock state based on time
         }
 
-        sleep(1); // Check every second instead of 5
+        sleep(1); // Check every second
     }
 
     return 0;

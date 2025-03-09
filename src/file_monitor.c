@@ -162,7 +162,6 @@ void monitor_directory()
 
     while (1)
     {
-        // Add small delay to prevent CPU spinning
         usleep(100000); // 100ms delay
 
         ssize_t length;
