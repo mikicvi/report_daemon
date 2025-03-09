@@ -142,12 +142,16 @@ int copy_file(const char *src, const char *dst)
     return 0;
 }
 
-/* Helper function to check if it's a specific time */
+/* Helper function to check if it's within a specific time window */
 int is_time(int hour, int minute)
 {
     time_t now;
     struct tm *current_time;
     time(&now);
     current_time = localtime(&now);
-    return current_time->tm_hour == hour && current_time->tm_min == minute;
+
+    // Check if we're within the first minute of the specified hour
+    return (current_time->tm_hour == hour &&
+            current_time->tm_min == minute &&
+            current_time->tm_sec < 60); // Only trigger once in the minute
 }

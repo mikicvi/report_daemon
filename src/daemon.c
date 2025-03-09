@@ -168,35 +168,36 @@ int main(int argc, char *argv[])
     {
         time_t now = time(NULL);
 
-        /* Check for missing reports at 23:30 (upload deadline) */
-        if (is_time(23, 30) && (now - last_missing_check) >= 60)
+        /* Check for missing reports at 23:30 */
+        if (is_time(23, 30) && (now - last_missing_check) > 60)
         {
             log_message("INFO", "Checking for missing reports at deadline");
             lock_directories();
             check_missing_reports();
             last_missing_check = now;
+            // Don't unlock - directories stay locked until backup at 1am
         }
 
         /* Scheduled backup at 1:00 */
-        if (is_time(1, 0) && (now - last_backup_check) >= 60)
+        if (is_time(1, 0) && (now - last_backup_check) > 60)
         {
             log_message("INFO", "Starting scheduled backup");
             perform_backup();
-            unlock_directories();
+            unlock_directories(); // Only unlock after backup
             last_backup_check = now;
+            sleep(60); // Sleep for a minute to avoid multiple triggers
         }
 
         /* Manual backup triggered by SIGUSR1 */
         if (backup_requested)
         {
             log_message("INFO", "Performing manual backup as requested");
-            lock_directories();
             perform_backup();
-            unlock_directories();
             backup_requested = 0;
+            // Don't unlock - maintain lock state based on time
         }
 
-        sleep(5);
+        sleep(1); // Check every second instead of 5
     }
 
     return 0;
