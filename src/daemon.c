@@ -1,6 +1,5 @@
 #include "utils.h"
 #include <signal.h>
-#include <time.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -8,6 +7,7 @@
 #include <string.h>
 #include <errno.h>
 #include <mqueue.h>
+#include <time.h>
 
 #define PID_FILE "/tmp/report_daemon.pid"
 
@@ -83,16 +83,6 @@ void make_daemon()
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
-}
-
-/* Helper function to check if it's a specific time */
-int is_time(int hour, int minute)
-{
-    time_t now;
-    struct tm *current_time;
-    time(&now);
-    current_time = localtime(&now);
-    return current_time->tm_hour == hour && current_time->tm_min == minute;
 }
 
 int main(int argc, char *argv[])

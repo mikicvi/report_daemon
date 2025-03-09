@@ -18,34 +18,6 @@ void get_date_string(char *buffer, size_t size)
              tm_now->tm_year + 1900, tm_now->tm_mon + 1, tm_now->tm_mday);
 }
 
-int check_required_files()
-{
-    char date_dir[MAX_PATH_BUFFER];
-    get_date_string(date_dir, sizeof(date_dir));
-
-    /* Build the current reporting directory path, e.g., "/var/reports/reporting/2023-03-04" */
-    char current_report_dir[MAX_PATH_BUFFER];
-    snprintf(current_report_dir, sizeof(current_report_dir), "%s/%s", REPORT_DIR, date_dir);
-
-    char filename[MAX_PATH_BUFFER];
-    int missing_count = 0;
-
-    for (int i = 1; i <= DEPT_COUNT; i++)
-    {
-        snprintf(filename, sizeof(filename), "%s/%s%d.xml",
-                 current_report_dir, FILE_PREFIX, i);
-
-        if (access(filename, F_OK) == -1)
-        {
-            char msg[1024];
-            snprintf(msg, sizeof(msg), "Missing report: %s", filename);
-            log_message("LOG", msg);
-            missing_count++;
-        }
-    }
-    return missing_count;
-}
-
 void move_reports()
 {
     char date_dir[MAX_PATH_BUFFER];

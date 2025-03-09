@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include "utils.h"
 
 void lock_directories()
@@ -101,12 +102,6 @@ int ensure_directory(const char *dir_path)
     return 0;
 }
 
-// Function to check if a file exists
-int file_exists(const char *file_path)
-{
-    return access(file_path, F_OK) != -1;
-}
-
 // Function to copy a file from src to dst
 int copy_file(const char *src, const char *dst)
 {
@@ -145,4 +140,14 @@ int copy_file(const char *src, const char *dst)
     fclose(in);
     fclose(out);
     return 0;
+}
+
+/* Helper function to check if it's a specific time */
+int is_time(int hour, int minute)
+{
+    time_t now;
+    struct tm *current_time;
+    time(&now);
+    current_time = localtime(&now);
+    return current_time->tm_hour == hour && current_time->tm_min == minute;
 }

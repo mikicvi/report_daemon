@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <mqueue.h> // For POSIX message queues
+#include <mqueue.h>
 
 #define UPLOAD_DIR "/var/reports/uploads"
 #define REPORT_DIR "/var/reports/reporting"
@@ -38,7 +38,6 @@ void cleanup_msg_queue(mqd_t mq);
 void close_msg_queue(mqd_t mq);
 
 // File checking functions
-int check_required_files();
 void check_missing_reports();
 
 // Logging function
@@ -46,16 +45,12 @@ void log_message(const char *type, const char *message);
 
 // Directory and File functions
 int ensure_directory(const char *dir_path);
-int file_exists(const char *file_path);
 
 // Lock directories during backup
 void lock_directories();
 
 // Unlock directories after backup
 void unlock_directories();
-
-// Move XML reports function
-void move_reports();
 
 // Perform backup functionality
 void perform_backup();
