@@ -8,6 +8,7 @@
 #include <string.h>
 #include <errno.h>
 #include <mqueue.h>
+#include <sys/wait.h>
 
 #define PID_FILE "/tmp/report_daemon.pid"
 
@@ -21,6 +22,13 @@ void handle_signal(int sig)
         log_message("INFO", "SIGUSR1 received: scheduling manual backup");
         backup_requested = 1;
     }
+}
+
+/* Signal handler for SIGCHLD - reap zombie processes */
+void handle_child(int sig)
+{
+    while (waitpid(-1, NULL, WNOHANG) > 0)
+        ;
 }
 
 /* Write the daemon's PID to a file so that the client mode can find it */
@@ -117,7 +125,8 @@ int main(int argc, char *argv[])
     time_t last_missing_check = 0;
     time_t last_backup_check = 0;
 
-    /* Fork a process to monitor the upload directory */
+    /* Fork a process to monitor the upload directory but reap it in exit case */
+    signal(SIGCHLD, handle_child);
     pid_t monitor_pid = fork();
     if (monitor_pid == 0)
     {
