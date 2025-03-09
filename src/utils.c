@@ -105,7 +105,7 @@ int ensure_directory(const char *dir_path)
 // Function to copy a file from src to dst
 int copy_file(const char *src, const char *dst)
 {
-    FILE *in = fopen(src, "rb");
+    FILE *in = fopen(src, "rb"); // "b" is for binary mode - no translations, raw
     if (!in)
     {
         char err[256];

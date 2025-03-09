@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <signal.h>
+#include <time.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -7,7 +8,6 @@
 #include <string.h>
 #include <errno.h>
 #include <mqueue.h>
-#include <time.h>
 
 #define PID_FILE "/tmp/report_daemon.pid"
 
@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
             unlock_directories();
             backup_requested = 0;
         }
-        sleep(10);
+        sleep(5);
     }
     return 0;
 }

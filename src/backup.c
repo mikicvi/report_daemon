@@ -5,6 +5,7 @@
 #include <time.h>
 #include <dirent.h>
 
+/* Define to avoid compiler complaints*/
 #ifndef DT_REG
 #define DT_REG 8
 #endif
