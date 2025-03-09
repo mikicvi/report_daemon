@@ -121,28 +121,7 @@ void perform_backup()
     move_reports();
 
     /* Check for missing files */
-    int missing = check_required_files();
-    if (missing > 0)
-    {
-        char warn_msg[1024];
-        snprintf(warn_msg, sizeof(warn_msg), "Warning: %d files missing in today's reporting directory", missing);
-        log_message("LOG", warn_msg);
-        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
-        if (mq != (mqd_t)-1)
-        {
-            send_task_msg(mq, "check_files", 0, warn_msg);
-            mq_close(mq);
-        }
-    }
-    else
-    {
-        mqd_t mq = mq_open(MQ_NAME, O_RDWR);
-        if (mq != (mqd_t)-1)
-        {
-            send_task_msg(mq, "check_files", 1, "All reports present");
-            mq_close(mq);
-        }
-    }
+    check_missing_reports();
 
     char date_dir[MAX_PATH_BUFFER];
     get_date_string(date_dir, sizeof(date_dir));
