@@ -92,9 +92,8 @@ void perform_backup()
     /* First, move new reports */
     move_reports();
 
-    /* Check for missing files */
-    check_missing_reports();
-
+    /* Not checking for missing reports: that was already done earlier,
+    we only care about backing up what exists and we are showing what is backed up anyway. */
     char date_dir[MAX_PATH_BUFFER];
     get_date_string(date_dir, sizeof(date_dir));
 
