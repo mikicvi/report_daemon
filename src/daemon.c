@@ -31,6 +31,18 @@ void handle_child(int sig)
         ;
 }
 
+// Add cleanup function and handler
+static void cleanup(void)
+{
+    unlink(PID_FILE);
+}
+
+static void handle_termination(int sig)
+{
+    cleanup();
+    exit(0);
+}
+
 /* Write the daemon's PID to a file so that the client mode can find it */
 void write_pid_file()
 {
@@ -103,6 +115,11 @@ int main(int argc, char *argv[])
         else
             return EXIT_FAILURE;
     }
+
+    signal(SIGTERM, handle_termination);
+    signal(SIGINT, handle_termination);
+    signal(SIGQUIT, handle_termination);
+    atexit(cleanup);
 
     /* Normal daemon operation */
     make_daemon();

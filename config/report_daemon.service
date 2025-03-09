@@ -1,6 +1,6 @@
 [Unit]
 Description=Department Report Monitoring Daemon
-After=network.target multi-user.target
+After=network.target
 Documentation=file:/usr/share/doc/report_daemon/README.md
 
 [Service]
@@ -17,7 +17,6 @@ StandardError=append:/var/log/report_daemon.log
 # Security settings
 ProtectSystem=full
 ProtectHome=true
-PrivateTmp=true
 NoNewPrivileges=true
 
 [Install]
